@@ -1,0 +1,29 @@
+name: spam_call_blocker
+description: A local-first spam call blocker with challenge-response verification for Android.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  path_provider: ^2.1.1
+  flutter_tts: ^3.8.5
+  permission_handler: ^11.1.0
+  contacts_service: ^0.6.3
+  share_plus: ^7.2.1
+  file_picker: ^6.1.1
+  intl: ^0.18.1
+  provider: ^6.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
