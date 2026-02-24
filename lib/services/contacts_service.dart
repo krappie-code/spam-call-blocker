@@ -1,4 +1,4 @@
-import 'package:contacts_service/contacts_service.dart' as cs;
+import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'database_service.dart';
 
@@ -12,20 +12,20 @@ class ContactsService {
     final status = await Permission.contacts.request();
     if (!status.isGranted) return false;
 
-    final contacts = await cs.ContactsService.getContacts(
-      withThumbnails: false,
-      photoHighResolution: false,
+    final contacts = await FlutterContacts.getContacts(
+      withProperties: true,
+      withPhoto: false,
+      withThumbnail: false,
     );
 
     final entries = <Map<String, String>>[];
     for (final contact in contacts) {
-      if (contact.phones == null) continue;
-      for (final phone in contact.phones!) {
-        final number = _normalizePhone(phone.value ?? '');
+      for (final phone in contact.phones) {
+        final number = _normalizePhone(phone.number);
         if (number.isNotEmpty) {
           entries.add({
             'phone': number,
-            'name': contact.displayName ?? 'Unknown',
+            'name': contact.displayName,
           });
         }
       }
