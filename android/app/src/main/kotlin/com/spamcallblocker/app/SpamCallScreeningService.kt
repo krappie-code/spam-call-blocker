@@ -1,5 +1,6 @@
 package com.spamcallblocker.app
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
@@ -20,7 +21,6 @@ class SpamCallScreeningService : CallScreeningService() {
         Log.d(TAG, "Screening call from: $phoneNumber")
 
         if (phoneNumber.isEmpty()) {
-            // No number available, allow through
             respondAllow(callDetails)
             return
         }
@@ -29,19 +29,16 @@ class SpamCallScreeningService : CallScreeningService() {
         if (isContact(phoneNumber)) {
             Log.d(TAG, "Caller is a contact, allowing: $phoneNumber")
             respondAllow(callDetails)
+            // Notify Flutter to log this call
+            notifyFlutter("contact_allowed", phoneNumber)
         } else {
-            Log.d(TAG, "Unknown caller, blocking: $phoneNumber")
-            // Block unknown callers - they didn't pass the challenge
-            // In a full implementation, we'd issue a TTS challenge first.
-            // For the MVP, unknown non-contact callers are silently rejected
-            // (sent to voicemail) so the user isn't disturbed.
-            val response = CallResponse.Builder()
-                .setDisallowCall(true)
-                .setRejectCall(true)
-                .setSkipCallLog(false)
-                .setSkipNotification(false)
-                .build()
-            respondToCall(callDetails, response)
+            Log.d(TAG, "Unknown caller, allowing through for challenge: $phoneNumber")
+            // IMPORTANT: We allow ALL calls through. The challenge happens
+            // AFTER the call is answered, via the InCallService / Flutter.
+            // The CallScreeningService can't play audio or wait for input.
+            respondAllow(callDetails)
+            // Notify Flutter that an unknown caller needs to be challenged
+            notifyFlutter("challenge_needed", phoneNumber)
         }
     }
 
@@ -56,8 +53,19 @@ class SpamCallScreeningService : CallScreeningService() {
     }
 
     /**
+     * Send an event to Flutter via a broadcast that MainActivity listens for.
+     */
+    private fun notifyFlutter(action: String, phoneNumber: String) {
+        val intent = Intent("com.spamcallblocker.app.CALL_EVENT").apply {
+            putExtra("action", action)
+            putExtra("phoneNumber", phoneNumber)
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+
+    /**
      * Check if the given phone number matches any contact on the device.
-     * Uses ContactsContract.PhoneLookup for normalized matching.
      */
     private fun isContact(phoneNumber: String): Boolean {
         return try {

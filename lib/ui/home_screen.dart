@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/database_service.dart';
+import '../services/call_screening_service.dart';
 import '../models/call_log.dart';
 import 'call_history_screen.dart';
 import 'settings_screen.dart';
@@ -67,6 +68,11 @@ class _DashboardPageState extends State<_DashboardPage> {
   void initState() {
     super.initState();
     _loadStats();
+    // Listen for call events to auto-refresh stats
+    final screening = context.read<CallScreeningService>();
+    screening.onCallProcessed = (phoneNumber, result) {
+      _loadStats();
+    };
   }
 
   Future<void> _loadStats() async {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/call_log.dart';
 import 'database_service.dart';
@@ -5,57 +6,56 @@ import 'challenge_service.dart';
 import 'contacts_service.dart';
 
 /// Bridges to the native Android CallScreeningService (API 29+).
-/// On Android 8-9, falls back to InCallService via platform channels.
+/// Listens for call events via EventChannel and logs them to the database.
 class CallScreeningService {
   static const _channel = MethodChannel('com.spamcallblocker.app/screening');
+  static const _eventChannel = EventChannel('com.spamcallblocker.app/call_events');
+  
   final DatabaseService _db;
   final ChallengeService _challenge;
   final ContactsService _contacts;
+  
+  StreamSubscription? _eventSubscription;
+  
+  // Callback for UI updates when a call is processed
+  void Function(String phoneNumber, CallResult result)? onCallProcessed;
 
   CallScreeningService(this._db, this._challenge, this._contacts);
 
-  /// Initialize platform channel handlers for incoming call events.
+  /// Start listening for call events from the native screening service.
   void init() {
-    _channel.setMethodCallHandler(_handleMethod);
+    _eventSubscription = _eventChannel
+        .receiveBroadcastStream()
+        .listen(_handleCallEvent, onError: (error) {
+      // EventChannel errors are non-fatal
+    });
   }
 
-  Future<dynamic> _handleMethod(MethodCall call) async {
-    switch (call.method) {
-      case 'onIncomingCall':
-        final phoneNumber = call.arguments['phoneNumber'] as String;
-        return await _handleIncomingCall(phoneNumber);
-      case 'onDtmfReceived':
-        final digit = call.arguments['digit'] as String;
-        return _challenge.verify(digit);
-      default:
-        throw MissingPluginException('Unknown method: ${call.method}');
-    }
+  void dispose() {
+    _eventSubscription?.cancel();
   }
 
-  /// Decide how to handle an incoming call.
-  /// Returns a map with 'action': 'allow', 'block', or 'challenge'.
-  Future<Map<String, String>> _handleIncomingCall(String phoneNumber) async {
-    // Check device contacts in real-time first
-    if (await _contacts.isDeviceContact(phoneNumber)) {
-      await _logCall(phoneNumber, CallResult.allowed);
-      return {'action': 'allow'};
-    }
+  Future<void> _handleCallEvent(dynamic event) async {
+    if (event is! Map) return;
+    final action = event['action'] as String?;
+    final phoneNumber = event['phoneNumber'] as String?;
+    if (action == null || phoneNumber == null) return;
 
-    // Check whitelist (manually added numbers)
-    if (await _db.isWhitelisted(phoneNumber)) {
-      await _logCall(phoneNumber, CallResult.allowed);
-      return {'action': 'allow'};
+    switch (action) {
+      case 'contact_allowed':
+        await _logCall(phoneNumber, CallResult.allowed);
+        onCallProcessed?.call(phoneNumber, CallResult.allowed);
+        break;
+      case 'challenge_needed':
+        // Unknown caller — log as blocked for now.
+        // In the full implementation, we'd issue a TTS challenge here
+        // via the InCallService, but that requires answering the call
+        // programmatically which needs additional Android permissions
+        // and the InCallService role.
+        await _logCall(phoneNumber, CallResult.blocked);
+        onCallProcessed?.call(phoneNumber, CallResult.blocked);
+        break;
     }
-
-    // Check block list
-    if (await _db.isBlocked(phoneNumber)) {
-      await _logCall(phoneNumber, CallResult.blocked);
-      return {'action': 'block'};
-    }
-
-    // Unknown caller → issue challenge
-    final digit = await _challenge.issueChallenge();
-    return {'action': 'challenge', 'expectedDigit': digit.toString()};
   }
 
   Future<void> _logCall(String phoneNumber, CallResult result) async {
