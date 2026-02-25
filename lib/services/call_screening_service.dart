@@ -47,13 +47,17 @@ class CallScreeningService {
         onCallProcessed?.call(phoneNumber, CallResult.allowed);
         break;
       case 'challenge_needed':
-        // Unknown caller — log as blocked for now.
-        // In the full implementation, we'd issue a TTS challenge here
-        // via the InCallService, but that requires answering the call
-        // programmatically which needs additional Android permissions
-        // and the InCallService role.
+        // Unknown caller — challenge is being issued by InCallService
         await _logCall(phoneNumber, CallResult.blocked);
         onCallProcessed?.call(phoneNumber, CallResult.blocked);
+        break;
+      case 'challenge_failed':
+        await _logCall(phoneNumber, CallResult.challengeFailed);
+        onCallProcessed?.call(phoneNumber, CallResult.challengeFailed);
+        break;
+      case 'challenge_passed':
+        await _logCall(phoneNumber, CallResult.challengePassed);
+        onCallProcessed?.call(phoneNumber, CallResult.challengePassed);
         break;
     }
   }

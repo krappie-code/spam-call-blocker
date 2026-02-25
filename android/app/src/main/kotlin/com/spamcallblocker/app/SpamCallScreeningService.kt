@@ -9,6 +9,15 @@ import android.telecom.CallScreeningService
 import android.util.Log
 import androidx.annotation.RequiresApi
 
+/**
+ * CallScreeningService (Android 10+).
+ * 
+ * This service makes a quick decision on incoming calls:
+ * - Known contacts → allow through immediately
+ * - Unknown callers → allow through (so InCallService can handle the challenge)
+ * 
+ * The actual challenge-response logic lives in SpamInCallService.
+ */
 @RequiresApi(Build.VERSION_CODES.Q)
 class SpamCallScreeningService : CallScreeningService() {
 
@@ -20,29 +29,14 @@ class SpamCallScreeningService : CallScreeningService() {
         val phoneNumber = callDetails.handle?.schemeSpecificPart ?: ""
         Log.d(TAG, "Screening call from: $phoneNumber")
 
-        if (phoneNumber.isEmpty()) {
-            respondAllow(callDetails)
-            return
-        }
-
-        // Check if the caller is in the user's contacts
-        if (isContact(phoneNumber)) {
-            Log.d(TAG, "Caller is a contact, allowing: $phoneNumber")
-            respondAllow(callDetails)
-            // Notify Flutter to log this call
+        // Always allow calls through — InCallService handles the challenge
+        // for unknown numbers. We just log contacts here for the dashboard.
+        if (phoneNumber.isNotEmpty() && isContact(phoneNumber)) {
+            Log.d(TAG, "Contact detected: $phoneNumber")
             notifyFlutter("contact_allowed", phoneNumber)
-        } else {
-            Log.d(TAG, "Unknown caller, allowing through for challenge: $phoneNumber")
-            // IMPORTANT: We allow ALL calls through. The challenge happens
-            // AFTER the call is answered, via the InCallService / Flutter.
-            // The CallScreeningService can't play audio or wait for input.
-            respondAllow(callDetails)
-            // Notify Flutter that an unknown caller needs to be challenged
-            notifyFlutter("challenge_needed", phoneNumber)
         }
-    }
 
-    private fun respondAllow(callDetails: Call.Details) {
+        // Allow all calls through to ring / be handled by InCallService
         val response = CallResponse.Builder()
             .setDisallowCall(false)
             .setRejectCall(false)
@@ -52,9 +46,6 @@ class SpamCallScreeningService : CallScreeningService() {
         respondToCall(callDetails, response)
     }
 
-    /**
-     * Send an event to Flutter via a broadcast that MainActivity listens for.
-     */
     private fun notifyFlutter(action: String, phoneNumber: String) {
         val intent = Intent("com.spamcallblocker.app.CALL_EVENT").apply {
             putExtra("action", action)
@@ -64,9 +55,6 @@ class SpamCallScreeningService : CallScreeningService() {
         sendBroadcast(intent)
     }
 
-    /**
-     * Check if the given phone number matches any contact on the device.
-     */
     private fun isContact(phoneNumber: String): Boolean {
         return try {
             val uri = Uri.withAppendedPath(
