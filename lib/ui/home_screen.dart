@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/database_service.dart';
-import '../services/contacts_service.dart' as app_contacts;
 import '../models/call_log.dart';
 import 'call_history_screen.dart';
 import 'settings_screen.dart';
@@ -98,20 +97,6 @@ class _DashboardPageState extends State<_DashboardPage> {
     }
   }
 
-  Future<void> _syncContacts() async {
-    final contactsService = context.read<app_contacts.ContactsService>();
-    final success = await contactsService.syncContacts();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(success
-              ? 'Contacts synced to whitelist!'
-              : 'Could not access contacts.'),
-        ),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -174,10 +159,23 @@ class _DashboardPageState extends State<_DashboardPage> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _syncContacts,
-                    icon: const Icon(Icons.contacts),
-                    label: const Text('Sync Contacts to Whitelist'),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline,
+                              color: theme.colorScheme.primary),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Calls from your contacts are automatically allowed. Unknown callers are challenged.',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),

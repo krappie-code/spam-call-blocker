@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import '../models/call_log.dart';
 import 'database_service.dart';
 import 'challenge_service.dart';
+import 'contacts_service.dart';
 
 /// Bridges to the native Android CallScreeningService (API 29+).
 /// On Android 8-9, falls back to InCallService via platform channels.
@@ -9,8 +10,9 @@ class CallScreeningService {
   static const _channel = MethodChannel('com.spamcallblocker.app/screening');
   final DatabaseService _db;
   final ChallengeService _challenge;
+  final ContactsService _contacts;
 
-  CallScreeningService(this._db, this._challenge);
+  CallScreeningService(this._db, this._challenge, this._contacts);
 
   /// Initialize platform channel handlers for incoming call events.
   void init() {
@@ -33,7 +35,13 @@ class CallScreeningService {
   /// Decide how to handle an incoming call.
   /// Returns a map with 'action': 'allow', 'block', or 'challenge'.
   Future<Map<String, String>> _handleIncomingCall(String phoneNumber) async {
-    // Check whitelist first
+    // Check device contacts in real-time first
+    if (await _contacts.isDeviceContact(phoneNumber)) {
+      await _logCall(phoneNumber, CallResult.allowed);
+      return {'action': 'allow'};
+    }
+
+    // Check whitelist (manually added numbers)
     if (await _db.isWhitelisted(phoneNumber)) {
       await _logCall(phoneNumber, CallResult.allowed);
       return {'action': 'allow'};

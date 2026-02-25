@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services/database_service.dart';
 import 'services/contacts_service.dart' as app_contacts;
 import 'ui/home_screen.dart';
+import 'ui/onboarding_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final db = DatabaseService();
   await db.init();
+
+  final prefs = await SharedPreferences.getInstance();
+  final onboardingComplete = prefs.getBool('onboarding_complete') ?? false;
 
   runApp(
     MultiProvider(
@@ -17,13 +22,15 @@ void main() async {
           create: (_) => app_contacts.ContactsService(db),
         ),
       ],
-      child: const SpamCallBlockerApp(),
+      child: SpamCallBlockerApp(showOnboarding: !onboardingComplete),
     ),
   );
 }
 
 class SpamCallBlockerApp extends StatelessWidget {
-  const SpamCallBlockerApp({super.key});
+  final bool showOnboarding;
+
+  const SpamCallBlockerApp({super.key, required this.showOnboarding});
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +48,7 @@ class SpamCallBlockerApp extends StatelessWidget {
         brightness: Brightness.dark,
       ),
       themeMode: ThemeMode.system,
-      home: const HomeScreen(),
+      home: showOnboarding ? const OnboardingScreen() : const HomeScreen(),
     );
   }
 }
