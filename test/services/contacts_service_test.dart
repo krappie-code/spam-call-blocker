@@ -15,14 +15,15 @@ void main() {
 
   group('Phone number matching logic', () {
     // Test the last-10-digit comparison used in isDeviceContact
-    test('numbers with same last 10 digits should match', () {
-      // +27 82 123 4567 vs 082 123 4567
+    test('numbers with same last 9 digits should match', () {
+      // +27 82 123 4567 → digits: 27821234567 → last 9: 821234567
+      // 082 123 4567   → digits: 0821234567  → last 9: 821234567
       final num1 = '+27821234567';
       final num2 = '0821234567';
       final suffix1 = num1.replaceAll(RegExp(r'[^\d]'), '');
       final suffix2 = num2.replaceAll(RegExp(r'[^\d]'), '');
-      final last1 = suffix1.length > 10 ? suffix1.substring(suffix1.length - 10) : suffix1;
-      final last2 = suffix2.length > 10 ? suffix2.substring(suffix2.length - 10) : suffix2;
+      final last1 = suffix1.length > 9 ? suffix1.substring(suffix1.length - 9) : suffix1;
+      final last2 = suffix2.length > 9 ? suffix2.substring(suffix2.length - 9) : suffix2;
       expect(last1, last2);
     });
 
@@ -31,8 +32,8 @@ void main() {
       final num2 = '+27829999999';
       final suffix1 = num1.replaceAll(RegExp(r'[^\d]'), '');
       final suffix2 = num2.replaceAll(RegExp(r'[^\d]'), '');
-      final last1 = suffix1.length > 10 ? suffix1.substring(suffix1.length - 10) : suffix1;
-      final last2 = suffix2.length > 10 ? suffix2.substring(suffix2.length - 10) : suffix2;
+      final last1 = suffix1.length > 9 ? suffix1.substring(suffix1.length - 9) : suffix1;
+      final last2 = suffix2.length > 9 ? suffix2.substring(suffix2.length - 9) : suffix2;
       expect(last1, isNot(equals(last2)));
     });
 
