@@ -1,8 +1,6 @@
 package com.spamcallblocker.app
 
 import android.content.Intent
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -14,38 +12,30 @@ import android.telecom.InCallService
 import android.telecom.VideoProfile
 import android.util.Log
 import java.util.Locale
-import kotlin.random.Random
 
 /**
- * InCallService that implements the challenge-response system.
+ * InCallService implementing the "wait-and-connect" spam filter.
  *
  * Flow for unknown callers:
- * 1. Call comes in → onCallAdded
- * 2. Check if caller is a contact → if yes, do nothing (let it ring normally)
- * 3. If unknown → answer the call programmatically
- * 4. Play TTS: "Press [digit] to connect"
- * 5. Listen for DTMF tone via Call.Callback
- * 6. Correct digit → stay connected (user's phone rings)
- * 7. Wrong/timeout → disconnect the call
+ * 1. Call comes in → check contacts & blocklist
+ * 2. Contact → let it ring normally
+ * 3. Blocklisted → reject immediately
+ * 4. Unknown → answer, play "Please hold while we connect you",
+ *    wait 8 seconds. If caller hangs up → spam. If still connected → 
+ *    notify the user via Flutter that a screened call is live.
  */
 class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
 
     companion object {
         private const val TAG = "SpamInCallService"
-        private const val CHALLENGE_TIMEOUT_MS = 15000L // 15 seconds to respond
-        private const val TTS_DELAY_MS = 500L // delay before speaking after answer
+        private const val HOLD_DURATION_MS = 8000L
+        private const val TTS_DELAY_MS = 500L
     }
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private val handler = Handler(Looper.getMainLooper())
-    private val activeChallenges = mutableMapOf<Call, ChallengeState>()
-
-    data class ChallengeState(
-        val expectedDigit: Int,
-        val phoneNumber: String,
-        var answered: Boolean = false
-    )
+    private val screenedCalls = mutableMapOf<Call, String>() // call → phoneNumber
 
     override fun onCreate() {
         super.onCreate()
@@ -55,11 +45,11 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale.US
-            tts?.setSpeechRate(0.85f)
+            tts?.setSpeechRate(0.9f)
             ttsReady = true
-            Log.d(TAG, "TTS initialized successfully")
+            Log.d(TAG, "TTS initialized")
         } else {
-            Log.e(TAG, "TTS initialization failed with status: $status")
+            Log.e(TAG, "TTS init failed: $status")
         }
     }
 
@@ -69,140 +59,109 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
 
         val phoneNumber = call.details?.handle?.schemeSpecificPart ?: ""
         val state = call.details?.state ?: Call.STATE_NEW
-        Log.d(TAG, "Call added: $phoneNumber, state: $state")
 
-        // Only process incoming ringing calls
         if (state != Call.STATE_RINGING) return
+        if (phoneNumber.isEmpty()) return
 
-        if (phoneNumber.isEmpty()) {
-            // No caller ID, let it ring
-            return
-        }
-
-        // Check if caller is a contact
+        // Contact → let it ring normally
         if (isContact(phoneNumber)) {
-            Log.d(TAG, "Contact call from $phoneNumber, allowing normally")
+            Log.d(TAG, "Contact: $phoneNumber, allowing")
             notifyFlutter("contact_allowed", phoneNumber)
             return
         }
 
-        // Unknown caller → start challenge
-        Log.d(TAG, "Unknown caller $phoneNumber, starting challenge")
-        startChallenge(call, phoneNumber)
-    }
-
-    private fun startChallenge(call: Call, phoneNumber: String) {
-        val digit = Random.nextInt(0, 10)
-        val state = ChallengeState(expectedDigit = digit, phoneNumber = phoneNumber)
-        activeChallenges[call] = state
-
-        // Register callback to listen for events on this call
-        call.registerCallback(object : Call.Callback() {
-            override fun onStateChanged(call: Call?, newState: Int) {
-                Log.d(TAG, "Call state changed to: $newState")
-                when (newState) {
-                    Call.STATE_ACTIVE -> {
-                        // Call was answered (by us), now play the challenge
-                        state.answered = true
-                        handler.postDelayed({
-                            playChallenge(call!!, digit)
-                        }, TTS_DELAY_MS)
-                    }
-                    Call.STATE_DISCONNECTED -> {
-                        cleanup(call!!)
-                    }
-                }
-            }
-
-            override fun onPostDialWait(call: Call?, remainingPostDialSequence: String?) {
-                // Some devices report DTMF here
-                Log.d(TAG, "Post dial wait: $remainingPostDialSequence")
-            }
-        })
-
-        // Answer the call to start the challenge
-        Log.d(TAG, "Answering call to issue challenge (digit: $digit)")
-        call.answer(VideoProfile.STATE_AUDIO_ONLY)
-
-        // Set timeout — disconnect if no correct response
-        handler.postDelayed({
-            val currentState = activeChallenges[call]
-            if (currentState != null) {
-                Log.d(TAG, "Challenge timeout for $phoneNumber")
-                notifyFlutter("challenge_failed", phoneNumber)
-                call.disconnect()
-                cleanup(call)
-            }
-        }, CHALLENGE_TIMEOUT_MS)
-    }
-
-    private fun playChallenge(call: Call, digit: Int) {
-        if (!ttsReady || tts == null) {
-            Log.e(TAG, "TTS not ready, disconnecting")
-            call.disconnect()
-            cleanup(call)
+        // Blocklisted → reject immediately
+        if (isBlocklisted(phoneNumber)) {
+            Log.d(TAG, "Blocklisted: $phoneNumber, rejecting")
+            call.reject(false, null)
+            notifyFlutter("blocklist_rejected", phoneNumber)
             return
         }
 
-        val message = "Hello. To verify you are not a spam caller, please press $digit on your keypad."
-        Log.d(TAG, "Playing challenge: press $digit")
+        // Unknown → screen with hold
+        Log.d(TAG, "Unknown: $phoneNumber, screening")
+        screenedCalls[call] = phoneNumber
+        startScreening(call, phoneNumber)
+    }
 
-        // Use setOnUtteranceProgressListener to know when TTS finishes
-        tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                Log.d(TAG, "TTS started")
+    private fun startScreening(call: Call, phoneNumber: String) {
+        call.registerCallback(object : Call.Callback() {
+            override fun onStateChanged(call: Call?, newState: Int) {
+                when (newState) {
+                    Call.STATE_ACTIVE -> {
+                        // Call answered by us, play hold message
+                        handler.postDelayed({
+                            playHoldMessage(call!!, phoneNumber)
+                        }, TTS_DELAY_MS)
+                    }
+                    Call.STATE_DISCONNECTED -> {
+                        // Caller hung up during screening → spam
+                        val num = screenedCalls.remove(call)
+                        if (num != null) {
+                            Log.d(TAG, "Caller hung up during hold: $num → spam")
+                            notifyFlutter("spam_detected", num)
+                        }
+                    }
+                }
             }
+        })
+
+        // Answer the call to begin screening
+        call.answer(VideoProfile.STATE_AUDIO_ONLY)
+    }
+
+    private fun playHoldMessage(call: Call, phoneNumber: String) {
+        if (!ttsReady || tts == null) {
+            Log.e(TAG, "TTS not ready, allowing call through")
+            screenedCalls.remove(call)
+            notifyFlutter("screened_connected", phoneNumber)
+            return
+        }
+
+        tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
 
             override fun onDone(utteranceId: String?) {
-                Log.d(TAG, "TTS done, waiting for DTMF response")
-                // After TTS, start listening for DTMF
-                // DTMF detection via Call events is limited on Android.
-                // We use playDtmfTone detection through audio analysis
-                // or rely on the user pressing the digit which sends
-                // a DTMF tone the carrier processes.
-                //
-                // Unfortunately, Android's InCallService doesn't provide
-                // a direct DTMF received callback for incoming tones.
-                // The most reliable approach: repeat the challenge once
-                // and listen for the call to remain active.
+                // After TTS, wait the remaining hold duration
                 handler.postDelayed({
-                    // Repeat the challenge once
-                    tts?.speak(
-                        "Again: press $digit to connect. Otherwise this call will end.",
-                        TextToSpeech.QUEUE_ADD,
-                        null,
-                        "challenge_repeat"
-                    )
-                }, 3000)
+                    // If caller is still connected → they're human
+                    if (screenedCalls.containsKey(call)) {
+                        screenedCalls.remove(call)
+                        Log.d(TAG, "Caller waited through hold: $phoneNumber → human")
+                        notifyFlutter("screened_connected", phoneNumber)
+                        // Call stays active — user can now talk to the caller
+                    }
+                }, HOLD_DURATION_MS)
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 Log.e(TAG, "TTS error")
+                screenedCalls.remove(call)
+                notifyFlutter("screened_connected", phoneNumber)
             }
         })
 
-        tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "challenge_initial")
+        tts?.speak(
+            "Please hold while we connect you. This call is being screened.",
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "hold_message"
+        )
     }
 
     override fun onCallRemoved(call: Call?) {
         super.onCallRemoved(call)
         call ?: return
-        val state = activeChallenges[call]
-        if (state != null) {
-            Log.d(TAG, "Call removed during challenge: ${state.phoneNumber}")
-            // If the caller hung up during challenge, that's a failed challenge
-            notifyFlutter("challenge_failed", state.phoneNumber)
+        val phoneNumber = screenedCalls.remove(call)
+        if (phoneNumber != null) {
+            Log.d(TAG, "Call removed during screening: $phoneNumber")
+            notifyFlutter("spam_detected", phoneNumber)
         }
-        cleanup(call)
-    }
-
-    private fun cleanup(call: Call) {
-        activeChallenges.remove(call)
     }
 
     /**
-     * Check if the given phone number matches any contact on the device.
+     * Check if caller is in device contacts.
      */
     private fun isContact(phoneNumber: String): Boolean {
         return try {
@@ -213,21 +172,38 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
             val cursor = contentResolver.query(
                 uri,
                 arrayOf(ContactsContract.PhoneLookup._ID),
-                null,
-                null,
-                null
+                null, null, null
             )
-            val found = cursor?.use { it.moveToFirst() } ?: false
-            found
+            cursor?.use { it.moveToFirst() } ?: false
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking contacts", e)
+            Log.e(TAG, "Contact check error", e)
             false
         }
     }
 
     /**
-     * Send an event to Flutter via broadcast.
+     * Check if number is in the app's blocklist via SharedPreferences.
+     * The Flutter side syncs the blocklist to SharedPreferences for
+     * fast native access without needing a DB connection.
      */
+    private fun isBlocklisted(phoneNumber: String): Boolean {
+        return try {
+            val prefs = getSharedPreferences("blocklist", MODE_PRIVATE)
+            val blocklist = prefs.getStringSet("numbers", emptySet()) ?: emptySet()
+            // Check exact match and last-10-digit match
+            val normalized = phoneNumber.replace(Regex("[^\\d]"), "")
+            val suffix = if (normalized.length > 10) normalized.takeLast(10) else normalized
+            blocklist.any { blocked ->
+                val blockedNorm = blocked.replace(Regex("[^\\d]"), "")
+                val blockedSuffix = if (blockedNorm.length > 10) blockedNorm.takeLast(10) else blockedNorm
+                blockedNorm == normalized || blockedSuffix == suffix
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Blocklist check error", e)
+            false
+        }
+    }
+
     private fun notifyFlutter(action: String, phoneNumber: String) {
         val intent = Intent("com.spamcallblocker.app.CALL_EVENT").apply {
             putExtra("action", action)

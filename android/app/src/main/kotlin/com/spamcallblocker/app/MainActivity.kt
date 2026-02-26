@@ -60,6 +60,12 @@ class MainActivity : FlutterActivity() {
                             result.success(false)
                         }
                     }
+                    "syncBlocklist" -> {
+                        val numbers = call.argument<List<String>>("numbers") ?: emptyList()
+                        val prefs = getSharedPreferences("blocklist", MODE_PRIVATE)
+                        prefs.edit().putStringSet("numbers", numbers.toSet()).apply()
+                        result.success(true)
+                    }
                     "hasScreeningRole" -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             val roleManager = getSystemService(RoleManager::class.java)

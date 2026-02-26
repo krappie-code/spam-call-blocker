@@ -1,34 +1,36 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/call_log.dart';
+import '../models/block_list.dart';
 import 'database_service.dart';
 import 'challenge_service.dart';
 import 'contacts_service.dart';
 
-/// Bridges to the native Android CallScreeningService (API 29+).
-/// Listens for call events via EventChannel and logs them to the database.
+/// Bridges to the native Android call services.
+/// Listens for call events and manages the blocklist.
 class CallScreeningService {
   static const _channel = MethodChannel('com.spamcallblocker.app/screening');
   static const _eventChannel = EventChannel('com.spamcallblocker.app/call_events');
-  
+
   final DatabaseService _db;
   final ChallengeService _challenge;
   final ContactsService _contacts;
-  
+
   StreamSubscription? _eventSubscription;
-  
-  // Callback for UI updates when a call is processed
+
+  /// Callback for UI updates when a call is processed
   void Function(String phoneNumber, CallResult result)? onCallProcessed;
 
   CallScreeningService(this._db, this._challenge, this._contacts);
 
-  /// Start listening for call events from the native screening service.
+  /// Start listening for call events and sync blocklist to native.
   void init() {
     _eventSubscription = _eventChannel
         .receiveBroadcastStream()
-        .listen(_handleCallEvent, onError: (error) {
-      // EventChannel errors are non-fatal
-    });
+        .listen(_handleCallEvent, onError: (error) {});
+    // Sync blocklist to SharedPreferences for native access
+    syncBlocklistToNative();
   }
 
   void dispose() {
@@ -46,16 +48,17 @@ class CallScreeningService {
         await _logCall(phoneNumber, CallResult.allowed);
         onCallProcessed?.call(phoneNumber, CallResult.allowed);
         break;
-      case 'challenge_needed':
-        // Unknown caller — challenge is being issued by InCallService
+      case 'blocklist_rejected':
         await _logCall(phoneNumber, CallResult.blocked);
         onCallProcessed?.call(phoneNumber, CallResult.blocked);
         break;
-      case 'challenge_failed':
-        await _logCall(phoneNumber, CallResult.challengeFailed);
-        onCallProcessed?.call(phoneNumber, CallResult.challengeFailed);
+      case 'spam_detected':
+        // Caller hung up during hold — likely spam
+        await _logCall(phoneNumber, CallResult.blocked);
+        onCallProcessed?.call(phoneNumber, CallResult.blocked);
         break;
-      case 'challenge_passed':
+      case 'screened_connected':
+        // Caller waited through hold — connected
         await _logCall(phoneNumber, CallResult.challengePassed);
         onCallProcessed?.call(phoneNumber, CallResult.challengePassed);
         break;
@@ -68,6 +71,36 @@ class CallScreeningService {
       timestamp: DateTime.now(),
       result: result,
     ));
+  }
+
+  /// Add a number to the blocklist and sync to native SharedPreferences.
+  Future<void> blockNumber(String phoneNumber, {String? label}) async {
+    await _db.addToBlockList(BlockListEntry(
+      phoneNumber: phoneNumber,
+      label: label,
+    ));
+    await syncBlocklistToNative();
+  }
+
+  /// Remove a number from the blocklist and sync to native.
+  Future<void> unblockNumber(int id) async {
+    await _db.removeFromBlockList(id);
+    await syncBlocklistToNative();
+  }
+
+  /// Sync the full blocklist to native SharedPreferences so the
+  /// InCallService can access it without a DB connection.
+  Future<void> syncBlocklistToNative() async {
+    final blocklist = await _db.getBlockList();
+    final numbers = blocklist.map((e) => e.phoneNumber).toSet();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('blocklist_numbers', numbers.toList());
+    // Also write to the native SharedPreferences file
+    try {
+      await _channel.invokeMethod('syncBlocklist', {'numbers': numbers.toList()});
+    } on MissingPluginException {
+      // Native method not available, blocklist synced via SharedPreferences
+    }
   }
 
   /// Request the user to set this app as the default call screening app.
