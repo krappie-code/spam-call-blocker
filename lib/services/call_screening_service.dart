@@ -29,8 +29,9 @@ class CallScreeningService {
     _eventSubscription = _eventChannel
         .receiveBroadcastStream()
         .listen(_handleCallEvent, onError: (error) {});
-    // Sync blocklist to SharedPreferences for native access
+    // Sync blocklist and whitelist to SharedPreferences for native access
     syncBlocklistToNative();
+    syncWhitelistToNative();
     // Drain any call logs recorded while Flutter was inactive
     _drainPendingLogs();
   }
@@ -96,13 +97,20 @@ class CallScreeningService {
         await _logCall(phoneNumber, CallResult.blocked);
         onCallProcessed?.call(phoneNumber, CallResult.blocked);
         break;
+      case 'whitelist_allowed':
+        await _logCall(phoneNumber, CallResult.allowed);
+        onCallProcessed?.call(phoneNumber, CallResult.allowed);
+        break;
+      case 'unknown_silenced':
+        // Unknown caller silenced — shows as missed call
+        await _logCall(phoneNumber, CallResult.blocked);
+        onCallProcessed?.call(phoneNumber, CallResult.blocked);
+        break;
       case 'spam_detected':
-        // Caller hung up during hold — likely spam
         await _logCall(phoneNumber, CallResult.blocked);
         onCallProcessed?.call(phoneNumber, CallResult.blocked);
         break;
       case 'screened_connected':
-        // Caller waited through hold — connected
         await _logCall(phoneNumber, CallResult.challengePassed);
         onCallProcessed?.call(phoneNumber, CallResult.challengePassed);
         break;
@@ -115,6 +123,25 @@ class CallScreeningService {
       timestamp: DateTime.now(),
       result: result,
     ));
+  }
+
+  /// Add a number to the whitelist (approve) and sync to native.
+  Future<void> whitelistNumber(String phoneNumber, {String? label}) async {
+    await _db.addToWhitelist(phoneNumber, label: label, source: 'manual');
+    await syncWhitelistToNative();
+  }
+
+  /// Sync whitelist to native SharedPreferences.
+  Future<void> syncWhitelistToNative() async {
+    // Get all manually whitelisted numbers
+    final db = await _db.database;
+    final rows = await db.query('whitelist', columns: ['phone_number']);
+    final numbers = rows.map((r) => r['phone_number'] as String).toSet();
+    try {
+      await _channel.invokeMethod('syncWhitelist', {'numbers': numbers.toList()});
+    } on MissingPluginException {
+      // Fallback — whitelist check happens in Flutter
+    }
   }
 
   /// Add a number to the blocklist and sync to native SharedPreferences.

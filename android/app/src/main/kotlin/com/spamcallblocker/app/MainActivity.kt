@@ -70,6 +70,12 @@ class MainActivity : FlutterActivity() {
                         prefs.edit().putStringSet("numbers", numbers.toSet()).apply()
                         result.success(true)
                     }
+                    "syncWhitelist" -> {
+                        val numbers = call.argument<List<String>>("numbers") ?: emptyList()
+                        val prefs = getSharedPreferences("whitelist", MODE_PRIVATE)
+                        prefs.edit().putStringSet("numbers", numbers.toSet()).apply()
+                        result.success(true)
+                    }
                     "hasScreeningRole" -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             val roleManager = getSystemService(RoleManager::class.java)
