@@ -54,12 +54,23 @@ class _CallHistoryScreenState extends State<CallHistoryScreen> {
     }
   }
 
-  Future<void> _markSpam(CallLogEntry entry, bool isSpam) async {
+  Future<void> _markSpam(CallLogEntry entry) async {
     final db = context.read<DatabaseService>();
-    await db.updateCallLogSpamStatus(entry.id!, isSpam);
-    if (isSpam) {
-      final screening = context.read<CallScreeningService>();
-      await screening.blockNumber(entry.phoneNumber, label: 'Marked as spam');
+    await db.updateCallLogSpamStatus(entry.id!, true);
+    final screening = context.read<CallScreeningService>();
+    await screening.blockNumber(entry.phoneNumber, label: 'Marked as spam');
+    await _load();
+  }
+
+  Future<void> _approve(CallLogEntry entry) async {
+    final db = context.read<DatabaseService>();
+    await db.updateCallLogSpamStatus(entry.id!, false);
+    final screening = context.read<CallScreeningService>();
+    await screening.whitelistNumber(entry.phoneNumber, label: 'Approved from history');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${entry.phoneNumber} will ring through next time')),
+      );
     }
     await _load();
   }
@@ -90,16 +101,16 @@ class _CallHistoryScreenState extends State<CallHistoryScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
-                                    icon: const Icon(Icons.thumb_down,
-                                        size: 20),
-                                    tooltip: 'Mark as spam',
-                                    onPressed: () => _markSpam(log, true),
+                                    icon: const Icon(Icons.block,
+                                        size: 20, color: Colors.red),
+                                    tooltip: 'Block this number',
+                                    onPressed: () => _markSpam(log),
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.thumb_up,
-                                        size: 20),
-                                    tooltip: 'Not spam',
-                                    onPressed: () => _markSpam(log, false),
+                                    icon: const Icon(Icons.check_circle,
+                                        size: 20, color: Colors.green),
+                                    tooltip: 'Allow future calls',
+                                    onPressed: () => _approve(log),
                                   ),
                                 ],
                               )

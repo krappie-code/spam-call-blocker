@@ -190,10 +190,10 @@ class _DashboardPageState extends State<_DashboardPage> {
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                              '• Contacts call through normally\n'
+                              '• Contacts ring through normally\n'
                               '• Blocklisted numbers are rejected instantly\n'
-                              '• Unknown callers hear "Please hold" and are screened\n'
-                              '• Spam bots hang up — real people wait and get connected'),
+                              '• Unknown callers are silenced (no ring)\n'
+                              '• Review missed calls in History → approve or block'),
                         ],
                       ),
                     ),
