@@ -33,6 +33,7 @@ class SpamCallScreeningService : CallScreeningService() {
         // for unknown numbers. We just log contacts here for the dashboard.
         if (phoneNumber.isNotEmpty() && isContact(phoneNumber)) {
             Log.d(TAG, "Contact detected: $phoneNumber")
+            CallLogStore.log(this, phoneNumber, "allowed", "contact_allowed")
             notifyFlutter("contact_allowed", phoneNumber)
         }
 

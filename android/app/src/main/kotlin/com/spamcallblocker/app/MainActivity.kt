@@ -60,6 +60,10 @@ class MainActivity : FlutterActivity() {
                             result.success(false)
                         }
                     }
+                    "drainPendingCallLogs" -> {
+                        val entries = CallLogStore.drainPending(this@MainActivity)
+                        result.success(entries)
+                    }
                     "syncBlocklist" -> {
                         val numbers = call.argument<List<String>>("numbers") ?: emptyList()
                         val prefs = getSharedPreferences("blocklist", MODE_PRIVATE)

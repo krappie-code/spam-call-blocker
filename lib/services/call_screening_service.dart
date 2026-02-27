@@ -24,13 +24,57 @@ class CallScreeningService {
 
   CallScreeningService(this._db, this._challenge, this._contacts);
 
-  /// Start listening for call events and sync blocklist to native.
+  /// Start listening for call events, sync blocklist, and drain pending logs.
   void init() {
     _eventSubscription = _eventChannel
         .receiveBroadcastStream()
         .listen(_handleCallEvent, onError: (error) {});
     // Sync blocklist to SharedPreferences for native access
     syncBlocklistToNative();
+    // Drain any call logs recorded while Flutter was inactive
+    _drainPendingLogs();
+  }
+
+  /// Import call logs that were recorded natively while the app was
+  /// in the background or killed.
+  Future<void> _drainPendingLogs() async {
+    try {
+      final result = await _channel.invokeMethod('drainPendingCallLogs');
+      if (result == null) return;
+      final entries = (result as List).cast<Map>();
+      for (final entry in entries) {
+        final phoneNumber = entry['phoneNumber'] as String;
+        final timestamp = entry['timestamp'] as int;
+        final resultStr = entry['result'] as String;
+
+        CallResult callResult;
+        switch (resultStr) {
+          case 'allowed':
+            callResult = CallResult.allowed;
+            break;
+          case 'blocked':
+            callResult = CallResult.blocked;
+            break;
+          case 'challengePassed':
+            callResult = CallResult.challengePassed;
+            break;
+          case 'challengeFailed':
+            callResult = CallResult.challengeFailed;
+            break;
+          default:
+            callResult = CallResult.blocked;
+        }
+
+        await _db.insertCallLog(CallLogEntry(
+          phoneNumber: phoneNumber,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(timestamp),
+          result: callResult,
+        ));
+        onCallProcessed?.call(phoneNumber, callResult);
+      }
+    } on PlatformException {
+      // Method not available — no pending logs
+    }
   }
 
   void dispose() {

@@ -66,6 +66,7 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
         // Contact → let it ring normally
         if (isContact(phoneNumber)) {
             Log.d(TAG, "Contact: $phoneNumber, allowing")
+            CallLogStore.log(this, phoneNumber, "allowed", "contact_allowed")
             notifyFlutter("contact_allowed", phoneNumber)
             return
         }
@@ -73,6 +74,7 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
         // Blocklisted → reject immediately
         if (isBlocklisted(phoneNumber)) {
             Log.d(TAG, "Blocklisted: $phoneNumber, rejecting")
+            CallLogStore.log(this, phoneNumber, "blocked", "blocklist_rejected")
             call.reject(false, null)
             notifyFlutter("blocklist_rejected", phoneNumber)
             return
@@ -99,6 +101,7 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
                         val num = screenedCalls.remove(call)
                         if (num != null) {
                             Log.d(TAG, "Caller hung up during hold: $num → spam")
+                            CallLogStore.log(this@SpamInCallService, num, "blocked", "spam_detected")
                             notifyFlutter("spam_detected", num)
                         }
                     }
@@ -128,6 +131,7 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
                     if (screenedCalls.containsKey(call)) {
                         screenedCalls.remove(call)
                         Log.d(TAG, "Caller waited through hold: $phoneNumber → human")
+                        CallLogStore.log(this@SpamInCallService, phoneNumber, "challengePassed", "screened_connected")
                         notifyFlutter("screened_connected", phoneNumber)
                         // Call stays active — user can now talk to the caller
                     }
@@ -156,6 +160,7 @@ class SpamInCallService : InCallService(), TextToSpeech.OnInitListener {
         val phoneNumber = screenedCalls.remove(call)
         if (phoneNumber != null) {
             Log.d(TAG, "Call removed during screening: $phoneNumber")
+            CallLogStore.log(this, phoneNumber, "blocked", "spam_detected")
             notifyFlutter("spam_detected", phoneNumber)
         }
     }
