@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/database_service.dart';
+import '../services/call_screening_service.dart';
 import '../models/call_log.dart';
-import '../models/block_list.dart';
 
 class CallHistoryScreen extends StatefulWidget {
   const CallHistoryScreen({super.key});
@@ -34,9 +34,9 @@ class _CallHistoryScreenState extends State<CallHistoryScreen> {
         return Colors.green;
       case CallResult.blocked:
         return Colors.red;
-      case CallResult.challengePassed:
+      case CallResult.challengePassed: // screened & connected
         return Colors.orange;
-      case CallResult.challengeFailed:
+      case CallResult.challengeFailed: // hung up during screening
         return Colors.red.shade300;
     }
   }
@@ -58,7 +58,8 @@ class _CallHistoryScreenState extends State<CallHistoryScreen> {
     final db = context.read<DatabaseService>();
     await db.updateCallLogSpamStatus(entry.id!, isSpam);
     if (isSpam) {
-      await db.addToBlockList(BlockListEntry(phoneNumber: entry.phoneNumber, label: 'Marked as spam'));
+      final screening = context.read<CallScreeningService>();
+      await screening.blockNumber(entry.phoneNumber, label: 'Marked as spam');
     }
     await _load();
   }

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/database_service.dart';
+import '../services/call_screening_service.dart';
 import '../models/call_log.dart';
 import 'call_history_screen.dart';
+import 'blocklist_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -20,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       const _DashboardPage(),
       const CallHistoryScreen(),
+      const BlocklistScreen(),
       const SettingsScreen(),
     ];
 
@@ -38,6 +41,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.history_outlined),
             selectedIcon: Icon(Icons.history),
             label: 'History',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.block_outlined),
+            selectedIcon: Icon(Icons.block),
+            label: 'Blocklist',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
@@ -60,19 +68,23 @@ class _DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<_DashboardPage> {
   int _blockedCount = 0;
   int _allowedCount = 0;
-  int _challengedCount = 0;
+  int _screenedCount = 0;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     _loadStats();
+    final screening = context.read<CallScreeningService>();
+    screening.onCallProcessed = (phoneNumber, result) {
+      _loadStats();
+    };
   }
 
   Future<void> _loadStats() async {
     final db = context.read<DatabaseService>();
     final logs = await db.getCallLogs(limit: 1000);
-    int blocked = 0, allowed = 0, challenged = 0;
+    int blocked = 0, allowed = 0, screened = 0;
     for (final log in logs) {
       switch (log.result) {
         case CallResult.blocked:
@@ -82,8 +94,10 @@ class _DashboardPageState extends State<_DashboardPage> {
           allowed++;
           break;
         case CallResult.challengePassed:
+          screened++;
+          break;
         case CallResult.challengeFailed:
-          challenged++;
+          blocked++;
           break;
       }
     }
@@ -91,7 +105,7 @@ class _DashboardPageState extends State<_DashboardPage> {
       setState(() {
         _blockedCount = blocked;
         _allowedCount = allowed;
-        _challengedCount = challenged;
+        _screenedCount = screened;
         _loading = false;
       });
     }
@@ -125,7 +139,7 @@ class _DashboardPageState extends State<_DashboardPage> {
                               style: theme.textTheme.headlineSmall),
                           const SizedBox(height: 4),
                           Text(
-                            'Challenge-response screening enabled',
+                            'Unknown callers are screened automatically',
                             style: theme.textTheme.bodyMedium?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant),
                           ),
@@ -151,9 +165,9 @@ class _DashboardPageState extends State<_DashboardPage> {
                       ),
                       const SizedBox(width: 8),
                       _StatCard(
-                        label: 'Challenged',
-                        count: _challengedCount,
-                        icon: Icons.help_outline,
+                        label: 'Screened',
+                        count: _screenedCount,
+                        icon: Icons.verified_user,
                         color: Colors.orange,
                       ),
                     ],
@@ -162,17 +176,24 @@ class _DashboardPageState extends State<_DashboardPage> {
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.info_outline,
-                              color: theme.colorScheme.primary),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Calls from your contacts are automatically allowed. Unknown callers are challenged.',
-                              style: theme.textTheme.bodyMedium,
-                            ),
+                          Row(
+                            children: [
+                              Icon(Icons.info_outline,
+                                  color: theme.colorScheme.primary),
+                              const SizedBox(width: 12),
+                              Text('How it works',
+                                  style: theme.textTheme.titleSmall),
+                            ],
                           ),
+                          const SizedBox(height: 8),
+                          const Text(
+                              '• Contacts call through normally\n'
+                              '• Blocklisted numbers are rejected instantly\n'
+                              '• Unknown callers hear "Please hold" and are screened\n'
+                              '• Spam bots hang up — real people wait and get connected'),
                         ],
                       ),
                     ),

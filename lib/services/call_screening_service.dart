@@ -1,61 +1,112 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/call_log.dart';
+import '../models/block_list.dart';
 import 'database_service.dart';
 import 'challenge_service.dart';
 import 'contacts_service.dart';
 
-/// Bridges to the native Android CallScreeningService (API 29+).
-/// On Android 8-9, falls back to InCallService via platform channels.
+/// Bridges to the native Android call services.
+/// Listens for call events and manages the blocklist.
 class CallScreeningService {
   static const _channel = MethodChannel('com.spamcallblocker.app/screening');
+  static const _eventChannel = EventChannel('com.spamcallblocker.app/call_events');
+
   final DatabaseService _db;
   final ChallengeService _challenge;
   final ContactsService _contacts;
 
+  StreamSubscription? _eventSubscription;
+
+  /// Callback for UI updates when a call is processed
+  void Function(String phoneNumber, CallResult result)? onCallProcessed;
+
   CallScreeningService(this._db, this._challenge, this._contacts);
 
-  /// Initialize platform channel handlers for incoming call events.
+  /// Start listening for call events, sync blocklist, and drain pending logs.
   void init() {
-    _channel.setMethodCallHandler(_handleMethod);
+    _eventSubscription = _eventChannel
+        .receiveBroadcastStream()
+        .listen(_handleCallEvent, onError: (error) {});
+    // Sync blocklist to SharedPreferences for native access
+    syncBlocklistToNative();
+    // Drain any call logs recorded while Flutter was inactive
+    _drainPendingLogs();
   }
 
-  Future<dynamic> _handleMethod(MethodCall call) async {
-    switch (call.method) {
-      case 'onIncomingCall':
-        final phoneNumber = call.arguments['phoneNumber'] as String;
-        return await _handleIncomingCall(phoneNumber);
-      case 'onDtmfReceived':
-        final digit = call.arguments['digit'] as String;
-        return _challenge.verify(digit);
-      default:
-        throw MissingPluginException('Unknown method: ${call.method}');
+  /// Import call logs that were recorded natively while the app was
+  /// in the background or killed.
+  Future<void> _drainPendingLogs() async {
+    try {
+      final result = await _channel.invokeMethod('drainPendingCallLogs');
+      if (result == null) return;
+      final entries = (result as List).cast<Map>();
+      for (final entry in entries) {
+        final phoneNumber = entry['phoneNumber'] as String;
+        final timestamp = entry['timestamp'] as int;
+        final resultStr = entry['result'] as String;
+
+        CallResult callResult;
+        switch (resultStr) {
+          case 'allowed':
+            callResult = CallResult.allowed;
+            break;
+          case 'blocked':
+            callResult = CallResult.blocked;
+            break;
+          case 'challengePassed':
+            callResult = CallResult.challengePassed;
+            break;
+          case 'challengeFailed':
+            callResult = CallResult.challengeFailed;
+            break;
+          default:
+            callResult = CallResult.blocked;
+        }
+
+        await _db.insertCallLog(CallLogEntry(
+          phoneNumber: phoneNumber,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(timestamp),
+          result: callResult,
+        ));
+        onCallProcessed?.call(phoneNumber, callResult);
+      }
+    } on PlatformException {
+      // Method not available — no pending logs
     }
   }
 
-  /// Decide how to handle an incoming call.
-  /// Returns a map with 'action': 'allow', 'block', or 'challenge'.
-  Future<Map<String, String>> _handleIncomingCall(String phoneNumber) async {
-    // Check device contacts in real-time first
-    if (await _contacts.isDeviceContact(phoneNumber)) {
-      await _logCall(phoneNumber, CallResult.allowed);
-      return {'action': 'allow'};
-    }
+  void dispose() {
+    _eventSubscription?.cancel();
+  }
 
-    // Check whitelist (manually added numbers)
-    if (await _db.isWhitelisted(phoneNumber)) {
-      await _logCall(phoneNumber, CallResult.allowed);
-      return {'action': 'allow'};
-    }
+  Future<void> _handleCallEvent(dynamic event) async {
+    if (event is! Map) return;
+    final action = event['action'] as String?;
+    final phoneNumber = event['phoneNumber'] as String?;
+    if (action == null || phoneNumber == null) return;
 
-    // Check block list
-    if (await _db.isBlocked(phoneNumber)) {
-      await _logCall(phoneNumber, CallResult.blocked);
-      return {'action': 'block'};
+    switch (action) {
+      case 'contact_allowed':
+        await _logCall(phoneNumber, CallResult.allowed);
+        onCallProcessed?.call(phoneNumber, CallResult.allowed);
+        break;
+      case 'blocklist_rejected':
+        await _logCall(phoneNumber, CallResult.blocked);
+        onCallProcessed?.call(phoneNumber, CallResult.blocked);
+        break;
+      case 'spam_detected':
+        // Caller hung up during hold — likely spam
+        await _logCall(phoneNumber, CallResult.blocked);
+        onCallProcessed?.call(phoneNumber, CallResult.blocked);
+        break;
+      case 'screened_connected':
+        // Caller waited through hold — connected
+        await _logCall(phoneNumber, CallResult.challengePassed);
+        onCallProcessed?.call(phoneNumber, CallResult.challengePassed);
+        break;
     }
-
-    // Unknown caller → issue challenge
-    final digit = await _challenge.issueChallenge();
-    return {'action': 'challenge', 'expectedDigit': digit.toString()};
   }
 
   Future<void> _logCall(String phoneNumber, CallResult result) async {
@@ -64,6 +115,36 @@ class CallScreeningService {
       timestamp: DateTime.now(),
       result: result,
     ));
+  }
+
+  /// Add a number to the blocklist and sync to native SharedPreferences.
+  Future<void> blockNumber(String phoneNumber, {String? label}) async {
+    await _db.addToBlockList(BlockListEntry(
+      phoneNumber: phoneNumber,
+      label: label,
+    ));
+    await syncBlocklistToNative();
+  }
+
+  /// Remove a number from the blocklist and sync to native.
+  Future<void> unblockNumber(int id) async {
+    await _db.removeFromBlockList(id);
+    await syncBlocklistToNative();
+  }
+
+  /// Sync the full blocklist to native SharedPreferences so the
+  /// InCallService can access it without a DB connection.
+  Future<void> syncBlocklistToNative() async {
+    final blocklist = await _db.getBlockList();
+    final numbers = blocklist.map((e) => e.phoneNumber).toSet();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('blocklist_numbers', numbers.toList());
+    // Also write to the native SharedPreferences file
+    try {
+      await _channel.invokeMethod('syncBlocklist', {'numbers': numbers.toList()});
+    } on MissingPluginException {
+      // Native method not available, blocklist synced via SharedPreferences
+    }
   }
 
   /// Request the user to set this app as the default call screening app.

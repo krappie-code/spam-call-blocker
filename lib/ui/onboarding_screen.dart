@@ -14,6 +14,7 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   int _step = 0; // 0 = welcome, 1 = permissions, 2 = screening role
   bool _permissionsGranted = false;
+  // ignore: unused_field
   bool _roleGranted = false;
   String _permissionStatus = '';
 

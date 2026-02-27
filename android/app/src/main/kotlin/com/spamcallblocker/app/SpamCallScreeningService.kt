@@ -1,5 +1,6 @@
 package com.spamcallblocker.app
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
@@ -8,6 +9,15 @@ import android.telecom.CallScreeningService
 import android.util.Log
 import androidx.annotation.RequiresApi
 
+/**
+ * CallScreeningService (Android 10+).
+ * 
+ * This service makes a quick decision on incoming calls:
+ * - Known contacts → allow through immediately
+ * - Unknown callers → allow through (so InCallService can handle the challenge)
+ * 
+ * The actual challenge-response logic lives in SpamInCallService.
+ */
 @RequiresApi(Build.VERSION_CODES.Q)
 class SpamCallScreeningService : CallScreeningService() {
 
@@ -19,33 +29,15 @@ class SpamCallScreeningService : CallScreeningService() {
         val phoneNumber = callDetails.handle?.schemeSpecificPart ?: ""
         Log.d(TAG, "Screening call from: $phoneNumber")
 
-        if (phoneNumber.isEmpty()) {
-            // No number available, allow through
-            respondAllow(callDetails)
-            return
+        // Always allow calls through — InCallService handles the challenge
+        // for unknown numbers. We just log contacts here for the dashboard.
+        if (phoneNumber.isNotEmpty() && isContact(phoneNumber)) {
+            Log.d(TAG, "Contact detected: $phoneNumber")
+            CallLogStore.log(this, phoneNumber, "allowed", "contact_allowed")
+            notifyFlutter("contact_allowed", phoneNumber)
         }
 
-        // Check if the caller is in the user's contacts
-        if (isContact(phoneNumber)) {
-            Log.d(TAG, "Caller is a contact, allowing: $phoneNumber")
-            respondAllow(callDetails)
-        } else {
-            Log.d(TAG, "Unknown caller, blocking: $phoneNumber")
-            // Block unknown callers - they didn't pass the challenge
-            // In a full implementation, we'd issue a TTS challenge first.
-            // For the MVP, unknown non-contact callers are silently rejected
-            // (sent to voicemail) so the user isn't disturbed.
-            val response = CallResponse.Builder()
-                .setDisallowCall(true)
-                .setRejectCall(true)
-                .setSkipCallLog(false)
-                .setSkipNotification(false)
-                .build()
-            respondToCall(callDetails, response)
-        }
-    }
-
-    private fun respondAllow(callDetails: Call.Details) {
+        // Allow all calls through to ring / be handled by InCallService
         val response = CallResponse.Builder()
             .setDisallowCall(false)
             .setRejectCall(false)
@@ -55,10 +47,15 @@ class SpamCallScreeningService : CallScreeningService() {
         respondToCall(callDetails, response)
     }
 
-    /**
-     * Check if the given phone number matches any contact on the device.
-     * Uses ContactsContract.PhoneLookup for normalized matching.
-     */
+    private fun notifyFlutter(action: String, phoneNumber: String) {
+        val intent = Intent("com.spamcallblocker.app.CALL_EVENT").apply {
+            putExtra("action", action)
+            putExtra("phoneNumber", phoneNumber)
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+
     private fun isContact(phoneNumber: String): Boolean {
         return try {
             val uri = Uri.withAppendedPath(
