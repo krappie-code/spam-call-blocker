@@ -1,5 +1,7 @@
 package com.spamcallblocker.app
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -8,6 +10,7 @@ import android.telecom.Call
 import android.telecom.CallScreeningService
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.core.app.NotificationCompat
 
 /**
  * CallScreeningService (Android 10+) — the primary screening mechanism.
@@ -33,6 +36,7 @@ class SpamCallScreeningService : CallScreeningService() {
     override fun onScreenCall(callDetails: Call.Details) {
         val phoneNumber = callDetails.handle?.schemeSpecificPart ?: ""
         Log.d(TAG, "Screening call from: $phoneNumber")
+        showDebugNotification("📞 CSS fired: $phoneNumber")
 
         if (phoneNumber.isEmpty()) {
             respondAllow(callDetails)
@@ -147,6 +151,27 @@ class SpamCallScreeningService : CallScreeningService() {
         } catch (e: Exception) {
             Log.e(TAG, "Number set check error", e)
             false
+        }
+    }
+
+    private fun showDebugNotification(message: String) {
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                nm.createNotificationChannel(NotificationChannel(
+                    "css_debug", "Screening Debug", NotificationManager.IMPORTANCE_LOW
+                ))
+            }
+            val n = NotificationCompat.Builder(this, "css_debug")
+                .setSmallIcon(android.R.drawable.ic_menu_call)
+                .setContentTitle("Spam Call Blocker")
+                .setContentText(message)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(9002, n)
+        } catch (e: Exception) {
+            Log.e(TAG, "Debug notification failed", e)
         }
     }
 

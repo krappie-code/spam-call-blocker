@@ -102,7 +102,8 @@ class CallScreeningService {
         onCallProcessed?.call(phoneNumber, CallResult.allowed);
         break;
       case 'unknown_silenced':
-        // Unknown caller silenced — shows as missed call
+      case 'unknown_rejected':
+        // Unknown caller silenced or rejected
         await _logCall(phoneNumber, CallResult.blocked);
         onCallProcessed?.call(phoneNumber, CallResult.blocked);
         break;
