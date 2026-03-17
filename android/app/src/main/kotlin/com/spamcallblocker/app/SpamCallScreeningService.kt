@@ -70,11 +70,12 @@ class SpamCallScreeningService : CallScreeningService() {
             return
         }
 
-        // 4. Unknown → silence (no ring, shows as missed call)
-        Log.d(TAG, "Unknown: $phoneNumber → silence")
-        CallLogStore.log(this, phoneNumber, "blocked", "unknown_silenced")
-        notifyFlutter("unknown_silenced", phoneNumber)
-        respondSilence(callDetails)
+        // 4. Unknown → reject (end the call immediately)
+        Log.d(TAG, "Unknown: $phoneNumber → reject")
+        CallLogStore.log(this, phoneNumber, "blocked", "unknown_rejected")
+        notifyFlutter("unknown_rejected", phoneNumber)
+        showDebugNotification("🚫 Rejected unknown: $phoneNumber")
+        respondReject(callDetails)
     }
 
     private fun respondAllow(callDetails: Call.Details) {
