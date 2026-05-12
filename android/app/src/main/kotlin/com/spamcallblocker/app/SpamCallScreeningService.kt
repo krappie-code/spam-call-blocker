@@ -38,6 +38,12 @@ class SpamCallScreeningService : CallScreeningService() {
         Log.d(TAG, "Screening call from: $phoneNumber")
         showDebugNotification("📞 CSS fired: $phoneNumber")
 
+        // Mark CSS as active so PhoneStateReceiver knows to skip VoIP calls
+        getSharedPreferences("screening_state", MODE_PRIVATE).edit()
+            .putBoolean("css_active", true)
+            .putLong("css_last_fire", System.currentTimeMillis())
+            .apply()
+
         if (phoneNumber.isEmpty()) {
             respondAllow(callDetails)
             return

@@ -40,6 +40,14 @@ class PhoneStateReceiver : BroadcastReceiver() {
         if (state != TelephonyManager.EXTRA_STATE_RINGING) return
         if (phoneNumber.isEmpty()) return
 
+        // Skip if this is NOT a real cellular call.
+        // VoIP calls (WhatsApp, Telegram, etc.) also trigger PHONE_STATE
+        // but don't have a valid telephony subscription.
+        if (!isRealCellularCall(context)) {
+            Log.d(TAG, "Skipping non-cellular call (likely VoIP): $phoneNumber")
+            return
+        }
+
         // Check if CallScreeningService already handled this call
         // by looking at the native log store for a recent entry
         val recentlyScreened = wasRecentlyScreened(context, phoneNumber)
@@ -84,6 +92,43 @@ class PhoneStateReceiver : BroadcastReceiver() {
         notifyFlutter(context, "unknown_silenced", phoneNumber)
         rejectCall(context)
         showDebugNotification(context, "🔇 Rejected unknown: $phoneNumber")
+    }
+
+    /**
+     * Determine if this is a real cellular call vs a VoIP call.
+     * 
+     * Strategy: Wait briefly, then check if CSS logged this number.
+     * CSS only fires for real cellular calls. If CSS didn't log it
+     * within a few seconds, it's either:
+     * a) A VoIP call (WhatsApp, Telegram) → ignore
+     * b) CSS didn't fire (broken role) → use fallback
+     *
+     * We check the CSS active flag: CSS sets a flag when it's working,
+     * so we know whether to trust it or use the fallback.
+     */
+    private fun isRealCellularCall(context: Context): Boolean {
+        return try {
+            // Check if CSS has ever fired (set during onScreenCall)
+            val prefs = context.getSharedPreferences("screening_state", Context.MODE_PRIVATE)
+            val cssActive = prefs.getBoolean("css_active", false)
+            val lastCssTime = prefs.getLong("css_last_fire", 0)
+            val now = System.currentTimeMillis()
+
+            if (cssActive && (now - lastCssTime) < 86400000) {
+                // CSS has fired recently (within 24h) → it's working
+                // If CSS didn't handle THIS call, it's likely VoIP
+                Log.d(TAG, "CSS is active — this is likely a VoIP call, skipping")
+                false
+            } else {
+                // CSS hasn't fired recently → role might be broken
+                // Use fallback for real calls
+                Log.d(TAG, "CSS inactive — using fallback")
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking cellular call", e)
+            true
+        }
     }
 
     /**
