@@ -70,6 +70,12 @@ class MainActivity : FlutterActivity() {
                         prefs.edit().putStringSet("numbers", numbers.toSet()).apply()
                         result.success(true)
                     }
+                    "setProtectionEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: true
+                        val prefs = getSharedPreferences("screening_state", MODE_PRIVATE)
+                        prefs.edit().putBoolean("protection_enabled", enabled).apply()
+                        result.success(true)
+                    }
                     "syncWhitelist" -> {
                         val numbers = call.argument<List<String>>("numbers") ?: emptyList()
                         val prefs = getSharedPreferences("whitelist", MODE_PRIVATE)

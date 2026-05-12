@@ -175,6 +175,17 @@ class CallScreeningService {
     }
   }
 
+  /// Set protection enabled/disabled and sync to native.
+  Future<void> setProtectionEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setProtectionEnabled', {'enabled': enabled});
+    } on MissingPluginException {
+      // Fallback — just use SharedPreferences directly
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('protection_enabled', enabled);
+    }
+  }
+
   /// Request the user to set this app as the default call screening app.
   Future<bool> requestRole() async {
     try {

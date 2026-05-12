@@ -39,10 +39,20 @@ class SpamCallScreeningService : CallScreeningService() {
         showDebugNotification("📞 CSS fired: $phoneNumber")
 
         // Mark CSS as active so PhoneStateReceiver knows to skip VoIP calls
-        getSharedPreferences("screening_state", MODE_PRIVATE).edit()
+        val screeningPrefs = getSharedPreferences("screening_state", MODE_PRIVATE)
+        screeningPrefs.edit()
             .putBoolean("css_active", true)
             .putLong("css_last_fire", System.currentTimeMillis())
             .apply()
+
+        // Check if protection is enabled
+        val protectionEnabled = screeningPrefs.getBoolean("protection_enabled", true)
+        if (!protectionEnabled) {
+            Log.d(TAG, "Protection disabled, allowing all calls")
+            showDebugNotification("⏸️ Protection off — allowing: $phoneNumber")
+            respondAllow(callDetails)
+            return
+        }
 
         if (phoneNumber.isEmpty()) {
             respondAllow(callDetails)

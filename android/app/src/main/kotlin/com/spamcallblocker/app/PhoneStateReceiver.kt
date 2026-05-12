@@ -40,6 +40,14 @@ class PhoneStateReceiver : BroadcastReceiver() {
         if (state != TelephonyManager.EXTRA_STATE_RINGING) return
         if (phoneNumber.isEmpty()) return
 
+        // Check if protection is enabled
+        val screeningPrefs = context.getSharedPreferences("screening_state", Context.MODE_PRIVATE)
+        val protectionEnabled = screeningPrefs.getBoolean("protection_enabled", true)
+        if (!protectionEnabled) {
+            Log.d(TAG, "Protection disabled, skipping")
+            return
+        }
+
         // Skip if this is NOT a real cellular call.
         // VoIP calls (WhatsApp, Telegram, etc.) also trigger PHONE_STATE
         // but don't have a valid telephony subscription.
