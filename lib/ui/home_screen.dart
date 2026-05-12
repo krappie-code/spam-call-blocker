@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/database_service.dart';
 import '../services/call_screening_service.dart';
 import '../models/call_log.dart';
@@ -70,15 +71,46 @@ class _DashboardPageState extends State<_DashboardPage> {
   int _allowedCount = 0;
   int _screenedCount = 0;
   bool _loading = true;
+  bool _protectionEnabled = true;
 
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    _loadAll();
     final screening = context.read<CallScreeningService>();
     screening.onCallProcessed = (phoneNumber, result) {
       _loadStats();
     };
+  }
+
+  Future<void> _loadAll() async {
+    await _loadProtectionState();
+    await _loadStats();
+  }
+
+  Future<void> _loadProtectionState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _protectionEnabled = prefs.getBool('protection_enabled') ?? true;
+      });
+    }
+  }
+
+  Future<void> _toggleProtection() async {
+    final newState = !_protectionEnabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('protection_enabled', newState);
+
+    // Also sync to native SharedPreferences via method channel
+    final screening = context.read<CallScreeningService>();
+    await screening.setProtectionEnabled(newState);
+
+    if (mounted) {
+      setState(() {
+        _protectionEnabled = newState;
+      });
+    }
   }
 
   Future<void> _loadStats() async {
@@ -123,27 +155,64 @@ class _DashboardPageState extends State<_DashboardPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _loadStats,
+              onRefresh: _loadAll,
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // Protection toggle card
                   Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        children: [
-                          Icon(Icons.shield,
-                              size: 64, color: theme.colorScheme.primary),
-                          const SizedBox(height: 12),
-                          Text('Protection Active',
-                              style: theme.textTheme.headlineSmall),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Unknown callers are screened automatically',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant),
-                          ),
-                        ],
+                    color: _protectionEnabled
+                        ? theme.colorScheme.primaryContainer
+                        : theme.colorScheme.errorContainer,
+                    child: InkWell(
+                      onTap: _toggleProtection,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          children: [
+                            Icon(
+                              _protectionEnabled
+                                  ? Icons.shield
+                                  : Icons.shield_outlined,
+                              size: 64,
+                              color: _protectionEnabled
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.error,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              _protectionEnabled
+                                  ? 'Protection Active'
+                                  : 'Protection Disabled',
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                color: _protectionEnabled
+                                    ? theme.colorScheme.onPrimaryContainer
+                                    : theme.colorScheme.onErrorContainer,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Switch(
+                              value: _protectionEnabled,
+                              onChanged: (_) => _toggleProtection(),
+                              activeColor: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _protectionEnabled
+                                  ? 'Tap to disable call screening'
+                                  : 'Tap to enable call screening',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: _protectionEnabled
+                                    ? theme.colorScheme.onPrimaryContainer
+                                        .withAlpha(180)
+                                    : theme.colorScheme.onErrorContainer
+                                        .withAlpha(180),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
